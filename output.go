@@ -150,12 +150,29 @@ func writeFailureLog(task string, r Result) string {
 func printPackageList(packages []Package) {
 	fmt.Printf("\n%s%sWorkspace packages%s\n\n", bold, cyan, reset)
 	for _, pkg := range packages {
-		fmt.Printf("  %-40s %s(%s)%s\n", pkg.Label, dim, pkg.Name, reset)
-		for task, cmds := range pkg.Tasks {
+		typeStr := ""
+		if pkg.Type != "" {
+			typeStr = " " + pkg.Type
+		}
+		fmt.Printf("  %-40s %s(%s)%s%s%s\n", pkg.Label, dim, pkg.Name, reset, cyan, typeStr+reset)
+
+		// Sort task names for stable output
+		var taskNames []string
+		for t := range pkg.Tasks {
+			taskNames = append(taskNames, t)
+		}
+		sort.Strings(taskNames)
+
+		for _, task := range taskNames {
+			cmds := pkg.Tasks[task]
+			source := ""
+			if s, ok := pkg.TaskSources[task]; ok && s == "default" {
+				source = dim + " (default)" + reset
+			}
 			if len(cmds) == 1 {
-				fmt.Printf("    %s%-12s%s %s\n", green, task, reset, cmds[0])
+				fmt.Printf("    %s%-12s%s %s%s\n", green, task, reset, cmds[0], source)
 			} else {
-				fmt.Printf("    %s%-12s%s [%d steps]\n", green, task, reset, len(cmds))
+				fmt.Printf("    %s%-12s%s [%d steps]%s\n", green, task, reset, len(cmds), source)
 			}
 		}
 	}

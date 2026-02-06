@@ -12,8 +12,9 @@ import (
 
 // RootConfig is the workspace-level ux.toml.
 type RootConfig struct {
-	Workspace WorkspaceConfig       `toml:"workspace"`
-	Tasks     map[string]TaskConfig `toml:"tasks"`
+	Workspace WorkspaceConfig          `toml:"workspace"`
+	Tasks     map[string]TaskConfig    `toml:"tasks"`
+	Defaults  map[string]TypeDefaults  `toml:"defaults"`
 }
 
 type WorkspaceConfig struct {
@@ -24,12 +25,35 @@ type TaskConfig struct {
 	Parallel bool `toml:"parallel"`
 }
 
+// TypeDefaults defines default tasks for a package type (e.g., python, go).
+type TypeDefaults struct {
+	Tasks map[string]interface{} `toml:"tasks"`
+}
+
 // Package is a resolved workspace member with its tasks.
 type Package struct {
-	Name  string
-	Dir   string
-	Label string // e.g. //packages/ingest
-	Tasks map[string][]string
+	Name        string
+	Type        string // "python", "go", etc. May be empty for legacy packages.
+	Dir         string
+	Label       string // e.g. //packages/ingest
+	Tasks       map[string][]string
+	TaskSources map[string]string // "default" or "override" per task name
+}
+
+// Marker files mapped to their type, checked in priority order.
+var markerPriority = []struct {
+	file     string
+	typeName string
+}{
+	{"pyproject.toml", "python"},
+	{"go.mod", "go"},
+	{"Cargo.toml", "rust"},
+}
+
+// Directories to skip during recursive walks.
+var skipDirs = map[string]bool{
+	"node_modules": true, "vendor": true, "__pycache__": true,
+	"venv": true, ".venv": true, "dist": true, "build": true,
 }
 
 // findWorkspaceRoot walks up from cwd looking for a ux.toml with [workspace].
@@ -67,38 +91,58 @@ func loadRootConfig(root string) (*RootConfig, error) {
 }
 
 // discoverPackages resolves workspace members into packages.
-// Members use //label/... syntax:
-//
-//	//packages/...  → recursively find all ux.toml under packages/
-//	//cli           → exact directory cli/
+// It finds directories that have a ux.toml OR a recognized marker file
+// (pyproject.toml, go.mod, Cargo.toml) and resolves their tasks using
+// type defaults + per-package overrides.
 func discoverPackages(root string, cfg *RootConfig) ([]Package, error) {
 	var packages []Package
 	seen := make(map[string]bool)
+
+	defaults := resolveDefaults(cfg.Defaults)
 
 	for _, member := range cfg.Workspace.Members {
 		label := strings.TrimPrefix(member, "//")
 
 		if strings.HasSuffix(label, "/...") {
-			// Recursive discovery
 			baseDir := strings.TrimSuffix(label, "/...")
 			absBase := filepath.Join(root, baseDir)
 
 			err := filepath.Walk(absBase, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
-					return nil // skip inaccessible dirs
+					return nil
 				}
-				if info.Name() == "ux.toml" && path != filepath.Join(root, "ux.toml") {
-					dir := filepath.Dir(path)
-					if !seen[dir] {
-						seen[dir] = true
-						pkg, err := loadPackage(root, dir)
-						if err != nil {
-							return fmt.Errorf("loading %s: %w", path, err)
-						}
-						if pkg != nil {
-							packages = append(packages, *pkg)
-						}
-					}
+				if !info.IsDir() {
+					return nil
+				}
+				// Skip hidden and junk directories
+				name := info.Name()
+				if name != "." && strings.HasPrefix(name, ".") {
+					return filepath.SkipDir
+				}
+				if skipDirs[name] {
+					return filepath.SkipDir
+				}
+				// Don't treat the workspace root as a package
+				if path == root {
+					return nil
+				}
+				// Don't treat the base dir itself as a package (e.g., packages/)
+				if path == absBase {
+					return nil
+				}
+				if seen[path] {
+					return nil
+				}
+				if !isPackageDir(path) {
+					return nil
+				}
+				seen[path] = true
+				pkg, err := resolvePackage(root, path, defaults)
+				if err != nil {
+					return fmt.Errorf("loading %s: %w", path, err)
+				}
+				if pkg != nil {
+					packages = append(packages, *pkg)
 				}
 				return nil
 			})
@@ -106,21 +150,20 @@ func discoverPackages(root string, cfg *RootConfig) ([]Package, error) {
 				return nil, err
 			}
 		} else {
-			// Exact directory
 			dir := filepath.Join(root, label)
-			uxToml := filepath.Join(dir, "ux.toml")
-			if _, err := os.Stat(uxToml); err != nil {
-				continue // directory doesn't exist yet, skip
+			if seen[dir] {
+				continue
 			}
-			if !seen[dir] {
-				seen[dir] = true
-				pkg, err := loadPackage(root, dir)
-				if err != nil {
-					return nil, fmt.Errorf("loading %s: %w", uxToml, err)
-				}
-				if pkg != nil {
-					packages = append(packages, *pkg)
-				}
+			if !isPackageDir(dir) {
+				continue
+			}
+			seen[dir] = true
+			pkg, err := resolvePackage(root, dir, defaults)
+			if err != nil {
+				return nil, fmt.Errorf("loading %s: %w", dir, err)
+			}
+			if pkg != nil {
+				packages = append(packages, *pkg)
 			}
 		}
 	}
@@ -131,32 +174,45 @@ func discoverPackages(root string, cfg *RootConfig) ([]Package, error) {
 	return packages, nil
 }
 
-// loadPackage reads a per-package ux.toml and returns a Package.
-// Returns nil if the file doesn't define a [package] section.
-func loadPackage(root, dir string) (*Package, error) {
-	path := filepath.Join(dir, "ux.toml")
-
-	var raw struct {
-		Package struct {
-			Name string `toml:"name"`
-		} `toml:"package"`
-		Tasks map[string]interface{} `toml:"tasks"`
+// isPackageDir returns true if the directory has a ux.toml or a recognized marker file.
+func isPackageDir(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "ux.toml")); err == nil {
+		return true
 	}
-
-	_, err := toml.DecodeFile(path, &raw)
-	if err != nil {
-		return nil, err
+	for _, m := range markerPriority {
+		if _, err := os.Stat(filepath.Join(dir, m.file)); err == nil {
+			return true
+		}
 	}
+	return false
+}
 
-	if raw.Package.Name == "" {
-		return nil, nil
+// detectType checks for marker files and returns the detected type, or "".
+func detectType(dir string) string {
+	for _, m := range markerPriority {
+		if _, err := os.Stat(filepath.Join(dir, m.file)); err == nil {
+			return m.typeName
+		}
 	}
+	return ""
+}
 
-	rel, _ := filepath.Rel(root, dir)
-	label := "//" + filepath.ToSlash(rel)
+// resolveDefaults pre-parses the [defaults.<type>.tasks] sections into resolved commands.
+func resolveDefaults(raw map[string]TypeDefaults) map[string]map[string][]string {
+	result := make(map[string]map[string][]string)
+	for typeName, td := range raw {
+		result[typeName] = parseTasks(td.Tasks)
+	}
+	return result
+}
 
+// parseTasks converts raw TOML task values (string or []string) to resolved []string commands.
+func parseTasks(raw map[string]interface{}) map[string][]string {
+	if raw == nil {
+		return nil
+	}
 	tasks := make(map[string][]string)
-	for name, v := range raw.Tasks {
+	for name, v := range raw {
 		switch val := v.(type) {
 		case string:
 			tasks[name] = []string{val}
@@ -170,12 +226,86 @@ func loadPackage(root, dir string) (*Package, error) {
 			tasks[name] = cmds
 		}
 	}
+	return tasks
+}
+
+// resolvePackage loads a package from a directory, merging type defaults with per-package overrides.
+//
+// Resolution order (highest priority first):
+//  1. Per-package [tasks] in ux.toml
+//  2. Type defaults from root [defaults.<type>.tasks]
+//
+// Type is determined by: explicit type in ux.toml > auto-detected from marker files.
+func resolvePackage(root, dir string, defaults map[string]map[string][]string) (*Package, error) {
+	rel, _ := filepath.Rel(root, dir)
+	label := "//" + filepath.ToSlash(rel)
+
+	var name, explicitType string
+	var overrideTasks map[string][]string
+
+	// Try loading ux.toml
+	uxPath := filepath.Join(dir, "ux.toml")
+	if _, err := os.Stat(uxPath); err == nil {
+		var raw struct {
+			Package struct {
+				Name string `toml:"name"`
+				Type string `toml:"type"`
+			} `toml:"package"`
+			Tasks map[string]interface{} `toml:"tasks"`
+		}
+		if _, err := toml.DecodeFile(uxPath, &raw); err != nil {
+			return nil, err
+		}
+		name = raw.Package.Name
+		explicitType = raw.Package.Type
+		overrideTasks = parseTasks(raw.Tasks)
+	}
+
+	// Default name to directory basename
+	if name == "" {
+		name = filepath.Base(dir)
+	}
+
+	// Determine type: explicit > auto-detect
+	pkgType := explicitType
+	if pkgType == "" {
+		pkgType = detectType(dir)
+	}
+
+	// No type and no explicit tasks → not a usable package
+	if pkgType == "" && len(overrideTasks) == 0 {
+		return nil, nil
+	}
+
+	// Merge: start with type defaults, then apply per-package overrides
+	tasks := make(map[string][]string)
+	taskSources := make(map[string]string)
+
+	if pkgType != "" {
+		if dt, ok := defaults[pkgType]; ok {
+			for k, v := range dt {
+				tasks[k] = v
+				taskSources[k] = "default"
+			}
+		}
+	}
+	for k, v := range overrideTasks {
+		tasks[k] = v
+		taskSources[k] = "override"
+	}
+
+	// No tasks resolved → skip
+	if len(tasks) == 0 {
+		return nil, nil
+	}
 
 	return &Package{
-		Name:  raw.Package.Name,
-		Dir:   dir,
-		Label: label,
-		Tasks: tasks,
+		Name:        name,
+		Type:        pkgType,
+		Dir:         dir,
+		Label:       label,
+		Tasks:       tasks,
+		TaskSources: taskSources,
 	}, nil
 }
 
@@ -195,7 +325,6 @@ func filterByLabel(packages []Package, filter string) []Package {
 		return result
 	}
 
-	// Exact match
 	var result []Package
 	for _, pkg := range packages {
 		pkgPath := strings.TrimPrefix(pkg.Label, "//")
@@ -215,7 +344,7 @@ func filterAffected(root string, packages []Package) ([]Package, error) {
 
 	changedFiles := strings.Split(strings.TrimSpace(raw), "\n")
 	if len(changedFiles) == 1 && changedFiles[0] == "" {
-		return nil, nil // nothing changed
+		return nil, nil
 	}
 
 	var result []Package

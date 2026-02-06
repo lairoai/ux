@@ -10,8 +10,8 @@ import (
 )
 
 type packageJSON struct {
-	Name       string            `json:"name"`
-	Workspaces json.RawMessage   `json:"workspaces"`
+	Name       string          `json:"name"`
+	Workspaces json.RawMessage `json:"workspaces"`
 	Scripts    map[string]string `json:"scripts"`
 }
 
@@ -19,7 +19,17 @@ type turboJSON struct {
 	Tasks map[string]json.RawMessage `json:"tasks"`
 }
 
+// migratedPackage holds a workspace member's info during migration.
+type migratedPackage struct {
+	dir      string
+	name     string
+	pkgType  string
+	scripts  map[string]string
+}
+
 // runMigrate reads a turborepo workspace and generates ux.toml files.
+// It detects package types from marker files, groups common scripts into
+// [defaults.<type>.tasks], and emits minimal per-package configs.
 func runMigrate(dir string) error {
 	fmt.Printf("\n%s%sux migrate%s\n\n", bold, cyan, reset)
 
@@ -49,19 +59,8 @@ func runMigrate(dir string) error {
 	// 5. Convert npm workspace patterns to //... labels
 	members := convertWorkspacePatterns(workspacePatterns)
 
-	// 6. Generate and write root ux.toml
-	rootToml := generateRootToml(members, taskNames, serialTasks)
-	rootPath := filepath.Join(dir, "ux.toml")
-	if written, err := writeFileIfNew(rootPath, rootToml); err != nil {
-		return err
-	} else if written {
-		fmt.Printf("  %s✓%s  ux.toml\n", green, reset)
-	} else {
-		fmt.Printf("  %s~%s  ux.toml %s(already exists, skipped)%s\n", dim, reset, dim, reset)
-	}
-
-	// 7. Expand workspace patterns and migrate each member
-	var migrated int
+	// 6. Discover all workspace members, detect their types
+	var allPkgs []migratedPackage
 	for _, pattern := range workspacePatterns {
 		dirs, err := expandWorkspaceGlob(dir, pattern)
 		if err != nil {
@@ -75,20 +74,48 @@ func runMigrate(dir string) error {
 			if len(memberPkg.Scripts) == 0 {
 				continue
 			}
-
-			rel, _ := filepath.Rel(dir, memberDir)
-			pkgToml := generatePackageToml(memberPkg)
-			pkgPath := filepath.Join(memberDir, "ux.toml")
-
-			if written, err := writeFileIfNew(pkgPath, pkgToml); err != nil {
-				return err
-			} else if written {
-				fmt.Printf("  %s✓%s  %s/ux.toml\n", green, reset, filepath.ToSlash(rel))
-				migrated++
-			} else {
-				fmt.Printf("  %s~%s  %s/ux.toml %s(already exists, skipped)%s\n",
-					dim, reset, filepath.ToSlash(rel), dim, reset)
+			name := memberPkg.Name
+			if idx := strings.LastIndex(name, "/"); idx >= 0 {
+				name = name[idx+1:]
 			}
+			allPkgs = append(allPkgs, migratedPackage{
+				dir:     memberDir,
+				name:    name,
+				pkgType: detectType(memberDir),
+				scripts: memberPkg.Scripts,
+			})
+		}
+	}
+
+	// 7. Find common scripts per type → these become [defaults.<type>.tasks]
+	typeDefaults := findTypeDefaults(allPkgs)
+
+	// 8. Generate and write root ux.toml (now with defaults)
+	rootToml := generateRootTomlWithDefaults(members, taskNames, serialTasks, typeDefaults)
+	rootPath := filepath.Join(dir, "ux.toml")
+	if written, err := writeFileIfNew(rootPath, rootToml); err != nil {
+		return err
+	} else if written {
+		fmt.Printf("  %s✓%s  ux.toml\n", green, reset)
+	} else {
+		fmt.Printf("  %s~%s  ux.toml %s(already exists, skipped)%s\n", dim, reset, dim, reset)
+	}
+
+	// 9. Generate per-package ux.toml (minimal: type + overrides only)
+	var migrated int
+	for _, pkg := range allPkgs {
+		rel, _ := filepath.Rel(dir, pkg.dir)
+		pkgToml := generateMinimalPackageToml(pkg, typeDefaults)
+		pkgPath := filepath.Join(pkg.dir, "ux.toml")
+
+		if written, err := writeFileIfNew(pkgPath, pkgToml); err != nil {
+			return err
+		} else if written {
+			fmt.Printf("  %s✓%s  %s/ux.toml\n", green, reset, filepath.ToSlash(rel))
+			migrated++
+		} else {
+			fmt.Printf("  %s~%s  %s/ux.toml %s(already exists, skipped)%s\n",
+				dim, reset, filepath.ToSlash(rel), dim, reset)
 		}
 	}
 
@@ -97,29 +124,152 @@ func runMigrate(dir string) error {
 	return nil
 }
 
-// parseWorkspaces handles both array and object forms of "workspaces" in package.json.
-//
-//	Array form:  ["packages/*", "services/*"]
-//	Object form: {"packages": ["packages/*", "services/*"]}
+// findTypeDefaults groups packages by type, then finds scripts that are
+// identical across ALL packages of that type. Those become defaults.
+func findTypeDefaults(pkgs []migratedPackage) map[string]map[string]string {
+	// Group by type
+	byType := make(map[string][]migratedPackage)
+	for _, pkg := range pkgs {
+		if pkg.pkgType != "" {
+			byType[pkg.pkgType] = append(byType[pkg.pkgType], pkg)
+		}
+	}
+
+	result := make(map[string]map[string]string)
+	for typeName, typePkgs := range byType {
+		if len(typePkgs) < 2 {
+			continue // no point in defaults for a single package
+		}
+		common := findCommonScripts(typePkgs)
+		if len(common) > 0 {
+			result[typeName] = common
+		}
+	}
+	return result
+}
+
+// findCommonScripts returns scripts that are identical across all packages.
+func findCommonScripts(pkgs []migratedPackage) map[string]string {
+	if len(pkgs) == 0 {
+		return nil
+	}
+	// Start with all scripts from the first package
+	common := make(map[string]string)
+	for k, v := range pkgs[0].scripts {
+		common[k] = v
+	}
+	// Intersect: keep only scripts present in ALL packages with the same value
+	for _, pkg := range pkgs[1:] {
+		for k, v := range common {
+			if pkg.scripts[k] != v {
+				delete(common, k)
+			}
+		}
+	}
+	return common
+}
+
+func generateRootTomlWithDefaults(members, taskNames []string, serialTasks map[string]bool, typeDefaults map[string]map[string]string) string {
+	var b strings.Builder
+
+	b.WriteString("[workspace]\nmembers = [\n")
+	for i, m := range members {
+		b.WriteString(fmt.Sprintf("  %q", m))
+		if i < len(members)-1 {
+			b.WriteString(",")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("]\n\n[tasks]\n")
+
+	for _, name := range taskNames {
+		parallel := !serialTasks[name]
+		b.WriteString(fmt.Sprintf("%s = { parallel = %v }\n", name, parallel))
+	}
+
+	// Write [defaults.<type>.tasks] sections
+	var typeNames []string
+	for t := range typeDefaults {
+		typeNames = append(typeNames, t)
+	}
+	sort.Strings(typeNames)
+
+	for _, typeName := range typeNames {
+		scripts := typeDefaults[typeName]
+		b.WriteString(fmt.Sprintf("\n[defaults.%s.tasks]\n", typeName))
+
+		var scriptNames []string
+		for k := range scripts {
+			scriptNames = append(scriptNames, k)
+		}
+		sort.Strings(scriptNames)
+
+		for _, k := range scriptNames {
+			b.WriteString(fmt.Sprintf("%s = %q\n", k, scripts[k]))
+		}
+	}
+
+	return b.String()
+}
+
+// generateMinimalPackageToml emits a ux.toml with only type + overrides.
+// If all scripts match the type defaults, just emit [package] with type.
+// If some differ or are extra, emit only the differences in [tasks].
+func generateMinimalPackageToml(pkg migratedPackage, typeDefaults map[string]map[string]string) string {
+	var b strings.Builder
+
+	b.WriteString("[package]\n")
+	b.WriteString(fmt.Sprintf("name = %q\n", pkg.name))
+	if pkg.pkgType != "" {
+		b.WriteString(fmt.Sprintf("type = %q\n", pkg.pkgType))
+	}
+
+	// Figure out which scripts need to be in [tasks] (overrides + extras)
+	defaults := typeDefaults[pkg.pkgType]
+	var overrides []string
+
+	var scriptNames []string
+	for k := range pkg.scripts {
+		scriptNames = append(scriptNames, k)
+	}
+	sort.Strings(scriptNames)
+
+	for _, k := range scriptNames {
+		v := pkg.scripts[k]
+		if defaults != nil {
+			if defaultVal, ok := defaults[k]; ok && defaultVal == v {
+				continue // matches default, skip
+			}
+		}
+		overrides = append(overrides, k)
+	}
+
+	if len(overrides) > 0 {
+		b.WriteString("\n[tasks]\n")
+		for _, k := range overrides {
+			b.WriteString(fmt.Sprintf("%s = %q\n", k, pkg.scripts[k]))
+		}
+	}
+
+	return b.String()
+}
+
+// --- unchanged helpers below ---
+
 func parseWorkspaces(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-
-	// Try array first
 	var arr []string
 	if err := json.Unmarshal(raw, &arr); err == nil {
 		return arr, nil
 	}
-
-	// Try object form (yarn-style)
 	var obj struct {
 		Packages []string `json:"packages"`
 	}
 	if err := json.Unmarshal(raw, &obj); err == nil {
 		return obj.Packages, nil
 	}
-
 	return nil, fmt.Errorf("unrecognized workspaces format")
 }
 
@@ -147,7 +297,6 @@ func readTurboJSON(path string) (*turboJSON, error) {
 	return &t, nil
 }
 
-// detectSerialTasks parses root scripts for "turbo run <task> --concurrency=1".
 func detectSerialTasks(scripts map[string]string) map[string]bool {
 	serial := make(map[string]bool)
 	for _, cmd := range scripts {
@@ -161,22 +310,18 @@ func detectSerialTasks(scripts map[string]string) map[string]bool {
 	return serial
 }
 
-// collectTaskNames gathers unique task names from turbo.json and root scripts.
 func collectTaskNames(turbo *turboJSON, scripts map[string]string) []string {
 	seen := make(map[string]bool)
-
 	if turbo != nil {
 		for name := range turbo.Tasks {
 			seen[name] = true
 		}
 	}
-
 	for _, cmd := range scripts {
 		if task := extractTurboTaskName(cmd); task != "" {
 			seen[task] = true
 		}
 	}
-
 	var names []string
 	for name := range seen {
 		names = append(names, name)
@@ -185,7 +330,6 @@ func collectTaskNames(turbo *turboJSON, scripts map[string]string) []string {
 	return names
 }
 
-// extractTurboTaskName pulls the task name from "turbo run <task> [flags...]".
 func extractTurboTaskName(cmd string) string {
 	parts := strings.Fields(cmd)
 	for i, p := range parts {
@@ -199,10 +343,6 @@ func extractTurboTaskName(cmd string) string {
 	return ""
 }
 
-// convertWorkspacePatterns turns npm patterns into //label syntax.
-//
-//	"packages/*"  → "//packages/..."
-//	"cli"         → "//cli"
 func convertWorkspacePatterns(patterns []string) []string {
 	var members []string
 	for _, p := range patterns {
@@ -219,61 +359,12 @@ func convertWorkspacePatterns(patterns []string) []string {
 	return members
 }
 
-func generateRootToml(members, taskNames []string, serialTasks map[string]bool) string {
-	var b strings.Builder
-
-	b.WriteString("[workspace]\nmembers = [\n")
-	for i, m := range members {
-		b.WriteString(fmt.Sprintf("  %q", m))
-		if i < len(members)-1 {
-			b.WriteString(",")
-		}
-		b.WriteString("\n")
-	}
-	b.WriteString("]\n\n[tasks]\n")
-
-	for _, name := range taskNames {
-		parallel := !serialTasks[name]
-		b.WriteString(fmt.Sprintf("%s = { parallel = %v }\n", name, parallel))
-	}
-
-	return b.String()
-}
-
-func generatePackageToml(pkg *packageJSON) string {
-	var b strings.Builder
-
-	// Derive short name: "@scope/foo" → "foo"
-	name := pkg.Name
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		name = name[idx+1:]
-	}
-
-	b.WriteString("[package]\n")
-	b.WriteString(fmt.Sprintf("name = %q\n\n", name))
-	b.WriteString("[tasks]\n")
-
-	var names []string
-	for k := range pkg.Scripts {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-
-	for _, k := range names {
-		b.WriteString(fmt.Sprintf("%s = %q\n", k, pkg.Scripts[k]))
-	}
-
-	return b.String()
-}
-
-// expandWorkspaceGlob expands an npm workspace pattern to matching directories.
 func expandWorkspaceGlob(root, pattern string) ([]string, error) {
 	full := filepath.Join(root, pattern)
 	matches, err := filepath.Glob(full)
 	if err != nil {
 		return nil, err
 	}
-
 	var dirs []string
 	for _, m := range matches {
 		info, err := os.Stat(m)
@@ -288,8 +379,6 @@ func expandWorkspaceGlob(root, pattern string) ([]string, error) {
 	return dirs, nil
 }
 
-// writeFileIfNew writes content to path only if the file doesn't already exist.
-// Returns (true, nil) if written, (false, nil) if skipped.
 func writeFileIfNew(path, content string) (bool, error) {
 	if _, err := os.Stat(path); err == nil {
 		return false, nil
