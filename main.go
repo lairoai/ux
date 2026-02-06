@@ -16,7 +16,7 @@ func main() {
 
 	// Parse arguments
 	var task, filter string
-	var affected bool
+	var affected, verbose bool
 
 	for _, arg := range args {
 		switch {
@@ -25,6 +25,8 @@ func main() {
 			os.Exit(0)
 		case arg == "--affected":
 			affected = true
+		case arg == "--verbose" || arg == "-v":
+			verbose = true
 		case strings.HasPrefix(arg, "//"):
 			filter = arg
 		case strings.HasPrefix(arg, "-"):
@@ -118,7 +120,7 @@ func main() {
 	results := runTask(task, relevant, taskCfg)
 
 	// Print summary
-	printSummary(task, results)
+	printSummary(task, results, verbose)
 
 	// Exit 1 if any failures
 	for _, r := range results {
@@ -139,6 +141,7 @@ Commands:
   ux <task> //label           Run task on a specific package
   ux <task> //dir/...         Run task on all packages under dir/
   ux <task> --affected        Run task only on packages changed vs origin/main
+  ux <task> -v               Show failure output inline (verbose)
   ux list                     List all discovered packages and their tasks
   ux migrate                  Migrate from turborepo (reads package.json + turbo.json)
 

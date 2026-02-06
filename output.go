@@ -70,7 +70,8 @@ func (o *output) printBlank() {
 }
 
 // printSummary prints the sorted summary table, writes failure logs, and shows the final count.
-func printSummary(task string, results []Result) {
+// When verbose is true, failure output is printed inline.
+func printSummary(task string, results []Result, verbose bool) {
 	// Sort by label for a stable, scannable summary
 	sorted := make([]Result, len(results))
 	copy(sorted, results)
@@ -101,13 +102,24 @@ func printSummary(task string, results []Result) {
 		fmt.Printf("  %s  %-40s %s%s%s\n", icon, r.Package.Label, dim, fmtDuration(r.Duration), reset)
 	}
 
-	// Write log files and show paths for failures
+	// Write log files and show details for failures
 	if len(failures) > 0 {
 		fmt.Println()
 		for _, r := range failures {
 			logFile := writeFailureLog(task, r)
 			fmt.Printf("  %s%sFAIL%s %s\n", bold, red, reset, r.Package.Label)
-			fmt.Printf("    %s→ %s%s\n", dim, logFile, reset)
+			if r.FailedStep != "" {
+				fmt.Printf("    %s→ %s%s\n", dim, r.FailedStep, reset)
+			}
+			if verbose && r.Output != "" {
+				fmt.Println()
+				lines := strings.Split(strings.TrimRight(r.Output, "\n"), "\n")
+				for _, line := range lines {
+					fmt.Printf("    %s\n", line)
+				}
+				fmt.Println()
+			}
+			fmt.Printf("    %slog: %s%s\n", dim, logFile, reset)
 		}
 	}
 
