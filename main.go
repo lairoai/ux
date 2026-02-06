@@ -45,6 +45,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Handle migrate before workspace discovery (ux.toml doesn't exist yet)
+	if task == "migrate" {
+		dir, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := runMigrate(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	// Find workspace root
 	root, err := findWorkspaceRoot()
 	if err != nil {
@@ -126,6 +140,7 @@ Commands:
   ux <task> //dir/...         Run task on all packages under dir/
   ux <task> --affected        Run task only on packages changed vs origin/main
   ux list                     List all discovered packages and their tasks
+  ux migrate                  Migrate from turborepo (reads package.json + turbo.json)
 
 Examples:
   ux lint                     Lint everything (parallel)
