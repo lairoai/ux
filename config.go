@@ -310,8 +310,14 @@ func resolvePackage(root, dir string, defaults map[string]map[string][]string) (
 }
 
 // filterByLabel filters packages by a //label or //label/... pattern.
+// //... matches all packages.
 func filterByLabel(packages []Package, filter string) []Package {
 	label := strings.TrimPrefix(filter, "//")
+
+	// //... means everything
+	if label == "..." {
+		return packages
+	}
 
 	if strings.HasSuffix(label, "/...") {
 		prefix := strings.TrimSuffix(label, "/...")
