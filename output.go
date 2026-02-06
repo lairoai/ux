@@ -2,18 +2,21 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	reset  = "\033[0m"
-	bold   = "\033[1m"
-	dim    = "\033[2m"
-	red    = "\033[31m"
-	green  = "\033[32m"
-	cyan   = "\033[36m"
+	reset = "\033[0m"
+	bold  = "\033[1m"
+	dim   = "\033[2m"
+	red   = "\033[31m"
+	green = "\033[32m"
+	cyan  = "\033[36m"
 )
 
 const separator = "────────────────────────────────────────────────"
@@ -33,6 +36,21 @@ func newOutput(task string, count int, parallel bool) *output {
 	return &output{}
 }
 
+// printRunning shows the "● label" indicator at the start of serial execution.
+func (o *output) printRunning(label string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	fmt.Printf("  %s●%s  %s\n", cyan, reset, label)
+}
+
+// printStep shows the "→ command" line for each step in serial mode.
+func (o *output) printStep(cmdStr string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	fmt.Printf("    %s→ %s%s\n", dim, cmdStr, reset)
+}
+
+// printResult shows the ✓/✗ result line after a package completes.
 func (o *output) printResult(r Result) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -44,12 +62,26 @@ func (o *output) printResult(r Result) {
 	fmt.Printf("  %s  %-40s %s%s%s\n", icon, r.Package.Label, dim, fmtDuration(r.Duration), reset)
 }
 
-// printSummary prints failure details and the final summary line.
+// printBlank prints a blank line (used between serial packages).
+func (o *output) printBlank() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	fmt.Println()
+}
+
+// printSummary prints the sorted summary table, writes failure logs, and shows the final count.
 func printSummary(task string, results []Result) {
+	// Sort by label for a stable, scannable summary
+	sorted := make([]Result, len(results))
+	copy(sorted, results)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Package.Label < sorted[j].Package.Label
+	})
+
 	var passed, failed int
 	var failures []Result
 
-	for _, r := range results {
+	for _, r := range sorted {
 		if r.Success {
 			passed++
 		} else {
@@ -58,32 +90,60 @@ func printSummary(task string, results []Result) {
 		}
 	}
 
-	fmt.Println()
+	// Summary table
+	fmt.Printf("%s%s%s\n\n", dim, separator, reset)
 
-	// Show failure details
-	for _, r := range failures {
-		fmt.Printf("%s%s%s\n", dim, separator, reset)
-		fmt.Printf("%s%sFAIL%s  %s\n", bold, red, reset, r.Package.Label)
-		if r.FailedStep != "" {
-			fmt.Printf("  %s→ %s%s\n", dim, r.FailedStep, reset)
+	for _, r := range sorted {
+		icon := green + "✓" + reset
+		if !r.Success {
+			icon = red + "✗" + reset
 		}
-		if r.Output != "" {
-			fmt.Println()
-			lines := strings.Split(strings.TrimRight(r.Output, "\n"), "\n")
-			for _, line := range lines {
-				fmt.Printf("    %s\n", line)
-			}
-		}
-		fmt.Println()
+		fmt.Printf("  %s  %-40s %s%s%s\n", icon, r.Package.Label, dim, fmtDuration(r.Duration), reset)
 	}
 
-	fmt.Printf("%s%s%s\n", dim, separator, reset)
+	// Write log files and show paths for failures
+	if len(failures) > 0 {
+		fmt.Println()
+		for _, r := range failures {
+			logFile := writeFailureLog(task, r)
+			fmt.Printf("  %s%sFAIL%s %s\n", bold, red, reset, r.Package.Label)
+			fmt.Printf("    %s→ %s%s\n", dim, logFile, reset)
+		}
+	}
+
+	// Final count
+	fmt.Printf("\n%s%s%s\n", dim, separator, reset)
 	if failed > 0 {
 		fmt.Printf("%s: %s%d passed%s, %s%d failed%s\n\n",
 			task, green, passed, reset, red, failed, reset)
 	} else {
 		fmt.Printf("%s: %s%d passed%s\n\n", task, green, passed, reset)
 	}
+}
+
+// writeFailureLog writes the full output of a failed task to /tmp/ux/<task>/<label>.log.
+func writeFailureLog(task string, r Result) string {
+	// //packages/ingest → packages-ingest
+	name := strings.TrimPrefix(r.Package.Label, "//")
+	name = strings.ReplaceAll(name, "/", "-")
+
+	dir := filepath.Join(os.TempDir(), "ux", task)
+	os.MkdirAll(dir, 0755)
+
+	path := filepath.Join(dir, name+".log")
+
+	var content strings.Builder
+	fmt.Fprintf(&content, "ux %s %s\n", task, r.Package.Label)
+	fmt.Fprintf(&content, "dir: %s\n", r.Package.Dir)
+	if r.FailedStep != "" {
+		fmt.Fprintf(&content, "failed step: %s\n", r.FailedStep)
+	}
+	fmt.Fprintf(&content, "duration: %s\n", fmtDuration(r.Duration))
+	content.WriteString("\n--- output ---\n\n")
+	content.WriteString(r.Output)
+
+	os.WriteFile(path, []byte(content.String()), 0644)
+	return path
 }
 
 // printPackageList prints discovered packages (for `ux list`).
