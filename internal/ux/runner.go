@@ -1,4 +1,4 @@
-package main
+package ux
 
 import (
 	"bytes"
@@ -19,8 +19,8 @@ type Result struct {
 	Output     string
 }
 
-// runTask executes a task across all packages, respecting parallel/serial config.
-func runTask(task string, packages []Package, cfg TaskConfig) []Result {
+// RunTask executes a task across all packages, respecting parallel/serial config.
+func RunTask(task string, packages []Package, cfg TaskConfig) []Result {
 	results := make([]Result, len(packages))
 	out := newOutput(task, len(packages), cfg.Parallel)
 

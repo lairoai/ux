@@ -1,4 +1,4 @@
-package main
+package ux
 
 import (
 	"fmt"
@@ -69,9 +69,9 @@ func (o *output) printBlank() {
 	fmt.Println()
 }
 
-// printSummary prints the sorted summary table, writes failure logs, and shows the final count.
+// PrintSummary prints the sorted summary table, writes failure logs, and shows the final count.
 // When verbose is true, failure output is printed inline.
-func printSummary(task string, results []Result, verbose bool) {
+func PrintSummary(task string, results []Result, verbose bool) {
 	// Sort by label for a stable, scannable summary
 	sorted := make([]Result, len(results))
 	copy(sorted, results)
@@ -158,8 +158,8 @@ func writeFailureLog(task string, r Result) string {
 	return path
 }
 
-// printPackageList prints discovered packages (for `ux list`).
-func printPackageList(packages []Package) {
+// PrintPackageList prints discovered packages (for `ux list`).
+func PrintPackageList(packages []Package) {
 	fmt.Printf("\n%s%sWorkspace packages%s\n\n", bold, cyan, reset)
 	for _, pkg := range packages {
 		typeStr := ""

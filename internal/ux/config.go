@@ -1,4 +1,4 @@
-package main
+package ux
 
 import (
 	"fmt"
@@ -56,8 +56,8 @@ var skipDirs = map[string]bool{
 	"venv": true, ".venv": true, "dist": true, "build": true,
 }
 
-// findWorkspaceRoot walks up from cwd looking for a ux.toml with [workspace].
-func findWorkspaceRoot() (string, error) {
+// FindWorkspaceRoot walks up from cwd looking for a ux.toml with [workspace].
+func FindWorkspaceRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -80,8 +80,8 @@ func findWorkspaceRoot() (string, error) {
 	}
 }
 
-// loadRootConfig parses the root ux.toml.
-func loadRootConfig(root string) (*RootConfig, error) {
+// LoadRootConfig parses the root ux.toml.
+func LoadRootConfig(root string) (*RootConfig, error) {
 	var cfg RootConfig
 	_, err := toml.DecodeFile(filepath.Join(root, "ux.toml"), &cfg)
 	if err != nil {
@@ -90,11 +90,11 @@ func loadRootConfig(root string) (*RootConfig, error) {
 	return &cfg, nil
 }
 
-// discoverPackages resolves workspace members into packages.
+// DiscoverPackages resolves workspace members into packages.
 // It finds directories that have a ux.toml OR a recognized marker file
 // (pyproject.toml, go.mod, Cargo.toml) and resolves their tasks using
 // type defaults + per-package overrides.
-func discoverPackages(root string, cfg *RootConfig) ([]Package, error) {
+func DiscoverPackages(root string, cfg *RootConfig) ([]Package, error) {
 	var packages []Package
 	seen := make(map[string]bool)
 
@@ -309,9 +309,9 @@ func resolvePackage(root, dir string, defaults map[string]map[string][]string) (
 	}, nil
 }
 
-// filterByLabel filters packages by a //label or //label/... pattern.
+// FilterByLabel filters packages by a //label or //label/... pattern.
 // //... matches all packages.
-func filterByLabel(packages []Package, filter string) []Package {
+func FilterByLabel(packages []Package, filter string) []Package {
 	label := strings.TrimPrefix(filter, "//")
 
 	// //... means everything
@@ -341,8 +341,8 @@ func filterByLabel(packages []Package, filter string) []Package {
 	return result
 }
 
-// filterAffected keeps only packages that have changed files vs origin/main.
-func filterAffected(root string, packages []Package) ([]Package, error) {
+// FilterAffected keeps only packages that have changed files vs origin/main.
+func FilterAffected(root string, packages []Package) ([]Package, error) {
 	raw, err := gitDiffFiles(root)
 	if err != nil {
 		return nil, err

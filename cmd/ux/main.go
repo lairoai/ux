@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	ux "github.com/lairoai/ux/internal/ux"
 )
 
 func main() {
@@ -54,7 +56,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		if err := runMigrate(dir); err != nil {
+		if err := ux.RunMigrate(dir); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -62,21 +64,21 @@ func main() {
 	}
 
 	// Find workspace root
-	root, err := findWorkspaceRoot()
+	root, err := ux.FindWorkspaceRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Load root config
-	rootCfg, err := loadRootConfig(root)
+	rootCfg, err := ux.LoadRootConfig(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Discover all packages
-	packages, err := discoverPackages(root, rootCfg)
+	packages, err := ux.DiscoverPackages(root, rootCfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -84,16 +86,16 @@ func main() {
 
 	// Handle built-in commands
 	if task == "list" {
-		printPackageList(packages)
+		ux.PrintPackageList(packages)
 		os.Exit(0)
 	}
 
 	// Apply filters
 	if filter != "" {
-		packages = filterByLabel(packages, filter)
+		packages = ux.FilterByLabel(packages, filter)
 	}
 	if affected {
-		packages, err = filterAffected(root, packages)
+		packages, err = ux.FilterAffected(root, packages)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error filtering affected packages: %v\n", err)
 			os.Exit(1)
@@ -101,7 +103,7 @@ func main() {
 	}
 
 	// Keep only packages that define this task
-	var relevant []Package
+	var relevant []ux.Package
 	for _, pkg := range packages {
 		if _, ok := pkg.Tasks[task]; ok {
 			relevant = append(relevant, pkg)
@@ -117,10 +119,10 @@ func main() {
 	taskCfg := rootCfg.Tasks[task]
 
 	// Run
-	results := runTask(task, relevant, taskCfg)
+	results := ux.RunTask(task, relevant, taskCfg)
 
 	// Print summary
-	printSummary(task, results, verbose)
+	ux.PrintSummary(task, results, verbose)
 
 	// Exit 1 if any failures
 	for _, r := range results {

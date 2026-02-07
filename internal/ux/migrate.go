@@ -1,4 +1,4 @@
-package main
+package ux
 
 import (
 	"encoding/json"
@@ -10,8 +10,8 @@ import (
 )
 
 type packageJSON struct {
-	Name       string          `json:"name"`
-	Workspaces json.RawMessage `json:"workspaces"`
+	Name       string            `json:"name"`
+	Workspaces json.RawMessage   `json:"workspaces"`
 	Scripts    map[string]string `json:"scripts"`
 }
 
@@ -21,16 +21,16 @@ type turboJSON struct {
 
 // migratedPackage holds a workspace member's info during migration.
 type migratedPackage struct {
-	dir      string
-	name     string
-	pkgType  string
-	scripts  map[string]string
+	dir     string
+	name    string
+	pkgType string
+	scripts map[string]string
 }
 
-// runMigrate reads a turborepo workspace and generates ux.toml files.
+// RunMigrate reads a turborepo workspace and generates ux.toml files.
 // It detects package types from marker files, groups common scripts into
 // [defaults.<type>.tasks], and emits minimal per-package configs.
-func runMigrate(dir string) error {
+func RunMigrate(dir string) error {
 	fmt.Printf("\n%s%sux migrate%s\n\n", bold, cyan, reset)
 
 	// 1. Read root package.json
@@ -254,7 +254,7 @@ func generateMinimalPackageToml(pkg migratedPackage, typeDefaults map[string]map
 	return b.String()
 }
 
-// --- unchanged helpers below ---
+// --- helpers ---
 
 func parseWorkspaces(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 {
