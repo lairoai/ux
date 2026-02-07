@@ -4,4 +4,4 @@ build:
 	go build -o ux ./cmd/ux
 
 install: build
-	cp ux $(PREFIX)/ux
+	go install ./cmd/ux
