@@ -348,14 +348,14 @@ func ResolveFilter(root, cwd, raw string) (string, error) {
 	// Clean "./" prefix from raw
 	clean := strings.TrimPrefix(raw, "./")
 
-	switch {
-	case raw == ".":
+	switch raw {
+	case ".":
 		if rel == "" {
 			return "//...", nil
 		}
 		return "//" + rel, nil
 
-	case raw == "..." || raw == "./...":
+	case "...", "./...":
 		if rel == "" {
 			return "//...", nil
 		}

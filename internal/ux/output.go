@@ -182,7 +182,9 @@ func writeFailureLog(task string, r Result) string {
 	name = strings.ReplaceAll(name, "/", "-")
 
 	dir := filepath.Join(os.TempDir(), "ux", task)
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return ""
+	}
 
 	path := filepath.Join(dir, name+".log")
 
@@ -196,7 +198,9 @@ func writeFailureLog(task string, r Result) string {
 	content.WriteString("\n--- output ---\n\n")
 	content.WriteString(r.Output)
 
-	os.WriteFile(path, []byte(content.String()), 0644)
+	if err := os.WriteFile(path, []byte(content.String()), 0644); err != nil {
+		return ""
+	}
 	return path
 }
 
