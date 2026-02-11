@@ -16,6 +16,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Split at first "--": everything after goes to extraArgs
+	var extraArgs []string
+	for i, arg := range args {
+		if arg == "--" {
+			extraArgs = args[i+1:]
+			args = args[:i]
+			break
+		}
+	}
+
 	// Parse arguments
 	var task, filter string
 	var affected, verbose bool
@@ -29,7 +39,7 @@ func main() {
 			affected = true
 		case arg == "--verbose" || arg == "-v":
 			verbose = true
-		case strings.HasPrefix(arg, "//"):
+		case task != "" && ux.IsFilterArg(arg):
 			filter = arg
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", arg)
@@ -37,6 +47,8 @@ func main() {
 		default:
 			if task == "" {
 				task = arg
+			} else if ux.IsFilterArg(arg) {
+				filter = arg
 			} else {
 				fmt.Fprintf(os.Stderr, "unexpected argument: %s\n", arg)
 				os.Exit(1)
@@ -68,6 +80,20 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Resolve relative filter to absolute //label
+	if filter != "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		filter, err = ux.ResolveFilter(root, cwd, filter)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Load root config
@@ -115,11 +141,22 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Validate extra args: reject multi-step tasks
+	if len(extraArgs) > 0 {
+		for _, pkg := range relevant {
+			if cmds := pkg.Tasks[task]; len(cmds) > 1 {
+				fmt.Fprintf(os.Stderr, "error: cannot pass extra args (--) to multi-step task %q in %s (%d steps)\n",
+					task, pkg.Label, len(cmds))
+				os.Exit(1)
+			}
+		}
+	}
+
 	// Resolve task config (default to serial if not configured)
 	taskCfg := rootCfg.Tasks[task]
 
 	// Run
-	results := ux.RunTask(task, relevant, taskCfg)
+	results := ux.RunTask(task, relevant, taskCfg, extraArgs)
 
 	// Print summary
 	ux.PrintSummary(task, results, verbose)
@@ -136,14 +173,24 @@ func printUsage() {
 	fmt.Print(`ux - simple monorepo task runner
 
 Usage:
-  ux <task> [//label] [--affected]
+  ux <task> [target] [--affected] [-- extra args...]
+
+Targets:
+  //label             Absolute from workspace root
+  //dir/...           All packages under dir/
+  .                   Package at current directory
+  ...  ./...          All packages under current directory
+  foo/bar             Relative to current directory
 
 Commands:
   ux <task>                   Run task on all packages
-  ux <task> //label           Run task on a specific package
+  ux <task> .                 Run task on the package at cwd
+  ux <task> ...               Run task on all packages under cwd
+  ux <task> //label           Run task on a specific package (absolute)
   ux <task> //dir/...         Run task on all packages under dir/
   ux <task> --affected        Run task only on packages changed vs origin/main
-  ux <task> -v               Show failure output inline (verbose)
+  ux <task> -v                Show failure output inline (verbose)
+  ux <task> -- -n auto        Append flags to the underlying command
   ux list                     List all discovered packages and their tasks
   ux migrate                  Migrate from turborepo (reads package.json + turbo.json)
 
@@ -153,6 +200,8 @@ Examples:
   ux test //services/api      Test one package
   ux lint //packages/...      Lint all packages under packages/
   ux lint --affected          Lint only changed packages
+  cd packages/api && ux test .   Test from inside a package
+  ux test -- -n auto          Append pytest flags
 
 Configuration:
   Root ux.toml defines workspace members and task settings.

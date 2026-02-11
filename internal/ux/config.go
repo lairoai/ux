@@ -309,6 +309,70 @@ func resolvePackage(root, dir string, defaults map[string]map[string][]string) (
 	}, nil
 }
 
+// IsFilterArg returns true if an argument looks like a package filter rather than
+// a task name or flag. Matches: //-prefixed, ".", "...", "./...", "./" prefixed,
+// or bare paths containing "/" that don't start with "-".
+func IsFilterArg(arg string) bool {
+	if strings.HasPrefix(arg, "//") {
+		return true
+	}
+	if arg == "." || arg == "..." || arg == "./..." {
+		return true
+	}
+	if strings.HasPrefix(arg, "./") {
+		return true
+	}
+	if strings.Contains(arg, "/") && !strings.HasPrefix(arg, "-") {
+		return true
+	}
+	return false
+}
+
+// ResolveFilter converts a possibly-relative filter into a //-prefixed absolute filter.
+// root is the workspace root, cwd is the current working directory, raw is the user input.
+func ResolveFilter(root, cwd, raw string) (string, error) {
+	// Already absolute
+	if strings.HasPrefix(raw, "//") {
+		return raw, nil
+	}
+
+	rel, err := filepath.Rel(root, cwd)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve filter: %w", err)
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." {
+		rel = ""
+	}
+
+	// Clean "./" prefix from raw
+	clean := strings.TrimPrefix(raw, "./")
+
+	switch {
+	case raw == ".":
+		if rel == "" {
+			return "//...", nil
+		}
+		return "//" + rel, nil
+
+	case raw == "..." || raw == "./...":
+		if rel == "" {
+			return "//...", nil
+		}
+		return "//" + rel + "/...", nil
+
+	default:
+		// Bare relative path like "foo/bar" or "./foo"
+		joined := clean
+		if rel != "" {
+			joined = rel + "/" + clean
+		}
+		// Normalize path (remove double slashes, etc.)
+		joined = filepath.ToSlash(filepath.Clean(joined))
+		return "//" + joined, nil
+	}
+}
+
 // FilterByLabel filters packages by a //label or //label/... pattern.
 // //... matches all packages.
 func FilterByLabel(packages []Package, filter string) []Package {

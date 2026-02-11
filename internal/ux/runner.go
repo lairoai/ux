@@ -2,8 +2,6 @@ package ux
 
 import (
 	"bytes"
-	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -20,7 +18,8 @@ type Result struct {
 }
 
 // RunTask executes a task across all packages, respecting parallel/serial config.
-func RunTask(task string, packages []Package, cfg TaskConfig) []Result {
+// extraArgs are appended to each command (only valid for single-command tasks).
+func RunTask(task string, packages []Package, cfg TaskConfig, extraArgs []string) []Result {
 	results := make([]Result, len(packages))
 	out := newOutput(task, len(packages), cfg.Parallel)
 
@@ -28,36 +27,41 @@ func RunTask(task string, packages []Package, cfg TaskConfig) []Result {
 		var wg sync.WaitGroup
 		for i, pkg := range packages {
 			wg.Add(1)
+			out.markStarted(pkg.Label)
 			go func(i int, pkg Package) {
 				defer wg.Done()
-				results[i] = executeBuffered(task, pkg)
-				out.printResult(results[i])
+				results[i] = executeBuffered(task, pkg, extraArgs)
+				out.markCompleted(results[i])
 			}(i, pkg)
 		}
 		wg.Wait()
 	} else {
 		for i, pkg := range packages {
-			out.printRunning(pkg.Label)
-			results[i] = executeStreaming(task, pkg, out)
-			out.printResult(results[i])
-			out.printBlank()
+			out.markStarted(pkg.Label)
+			results[i] = executeBuffered(task, pkg, extraArgs)
+			out.markCompleted(results[i])
 		}
 	}
 
+	out.clearProgress()
 	return results
 }
 
-// executeBuffered runs a task and captures all output into a buffer (for parallel mode).
-func executeBuffered(task string, pkg Package) Result {
+// executeBuffered runs a task and captures all output into a buffer.
+func executeBuffered(task string, pkg Package, extraArgs []string) Result {
 	cmds := pkg.Tasks[task]
 	start := time.Now()
 
 	var allOutput strings.Builder
+	extra := ""
+	if len(extraArgs) > 0 {
+		extra = " " + strings.Join(extraArgs, " ")
+	}
 
 	for _, cmdStr := range cmds {
 		var stdout, stderr bytes.Buffer
 
-		cmd := exec.Command("sh", "-c", cmdStr)
+		cmd := exec.Command("sh", "-c", cmdStr+extra)
 		cmd.Dir = pkg.Dir
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
@@ -76,7 +80,7 @@ func executeBuffered(task string, pkg Package) Result {
 				Package:    pkg,
 				Success:    false,
 				Duration:   time.Since(start),
-				FailedStep: cmdStr,
+				FailedStep: cmdStr + extra,
 				Output:     allOutput.String(),
 			}
 		}
@@ -88,81 +92,6 @@ func executeBuffered(task string, pkg Package) Result {
 		Duration: time.Since(start),
 		Output:   allOutput.String(),
 	}
-}
-
-// executeStreaming runs a task and streams output to the terminal in real time
-// (for serial mode). Output is also captured into a buffer for log files.
-func executeStreaming(task string, pkg Package, out *output) Result {
-	cmds := pkg.Tasks[task]
-	start := time.Now()
-
-	var allOutput strings.Builder
-	pw := &prefixWriter{prefix: "    ", writer: os.Stdout, atStart: true}
-
-	for _, cmdStr := range cmds {
-		out.printStep(cmdStr)
-
-		var buf bytes.Buffer
-		tee := io.MultiWriter(pw, &buf)
-
-		cmd := exec.Command("sh", "-c", cmdStr)
-		cmd.Dir = pkg.Dir
-		cmd.Stdout = tee
-		cmd.Stderr = tee
-
-		err := cmd.Run()
-
-		allOutput.WriteString(buf.String())
-
-		if err != nil {
-			return Result{
-				Package:    pkg,
-				Success:    false,
-				Duration:   time.Since(start),
-				FailedStep: cmdStr,
-				Output:     allOutput.String(),
-			}
-		}
-	}
-
-	return Result{
-		Package:  pkg,
-		Success:  true,
-		Duration: time.Since(start),
-		Output:   allOutput.String(),
-	}
-}
-
-// prefixWriter wraps an io.Writer and prepends a prefix at the start of each line.
-type prefixWriter struct {
-	prefix  string
-	writer  io.Writer
-	atStart bool
-}
-
-func (pw *prefixWriter) Write(p []byte) (int, error) {
-	total := len(p)
-	for len(p) > 0 {
-		if pw.atStart {
-			if _, err := io.WriteString(pw.writer, pw.prefix); err != nil {
-				return total, err
-			}
-			pw.atStart = false
-		}
-		idx := bytes.IndexByte(p, '\n')
-		if idx < 0 {
-			// No newline — write remainder
-			_, err := pw.writer.Write(p)
-			return total, err
-		}
-		// Write through the newline, then flag next write for prefix
-		if _, err := pw.writer.Write(p[:idx+1]); err != nil {
-			return total, err
-		}
-		p = p[idx+1:]
-		pw.atStart = true
-	}
-	return total, nil
 }
 
 // gitDiffFiles returns the list of files changed vs origin/main.

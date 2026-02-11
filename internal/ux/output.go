@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -21,9 +23,18 @@ const (
 
 const separator = "────────────────────────────────────────────────"
 
-// output handles synchronized printing of task results.
+const clearLine = "\033[2K"
+
+// output handles synchronized progress display during task execution.
 type output struct {
-	mu sync.Mutex
+	mu        sync.Mutex
+	task      string
+	total     int
+	parallel  bool
+	completed int
+	failed    int
+	running   []string
+	isTTY     bool
 }
 
 func newOutput(task string, count int, parallel bool) *output {
@@ -31,42 +42,73 @@ func newOutput(task string, count int, parallel bool) *output {
 	if parallel {
 		mode = "parallel"
 	}
-	fmt.Printf("\n%s%sux %s%s  %s(%d packages, %s)%s\n\n",
+	fmt.Printf("\n%s%sux %s%s  %s(%d packages, %s)%s\n",
 		bold, cyan, task, reset, dim, count, mode, reset)
-	return &output{}
-}
 
-// printRunning shows the "● label" indicator at the start of serial execution.
-func (o *output) printRunning(label string) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	fmt.Printf("  %s●%s  %s\n", cyan, reset, label)
-}
-
-// printStep shows the "→ command" line for each step in serial mode.
-func (o *output) printStep(cmdStr string) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	fmt.Printf("    %s→ %s%s\n", dim, cmdStr, reset)
-}
-
-// printResult shows the ✓/✗ result line after a package completes.
-func (o *output) printResult(r Result) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	icon := green + "✓" + reset
-	if !r.Success {
-		icon = red + "✗" + reset
+	return &output{
+		task:     task,
+		total:    count,
+		parallel: parallel,
+		isTTY:    term.IsTerminal(int(os.Stdout.Fd())),
 	}
-	fmt.Printf("  %s  %-40s %s%s%s\n", icon, r.Package.Label, dim, fmtDuration(r.Duration), reset)
 }
 
-// printBlank prints a blank line (used between serial packages).
-func (o *output) printBlank() {
+// markStarted records that a package has begun execution and updates progress.
+func (o *output) markStarted(label string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	fmt.Println()
+	o.running = append(o.running, label)
+	o.updateProgress()
+}
+
+// markCompleted records that a package has finished and updates progress.
+func (o *output) markCompleted(r Result) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.completed++
+	if !r.Success {
+		o.failed++
+	}
+	// Remove from running
+	for i, label := range o.running {
+		if label == r.Package.Label {
+			o.running = append(o.running[:i], o.running[i+1:]...)
+			break
+		}
+	}
+	o.updateProgress()
+}
+
+// updateProgress writes a single-line progress indicator. Must be called with mu held.
+func (o *output) updateProgress() {
+	passed := o.completed - o.failed
+	status := fmt.Sprintf("  [%d/%d]", o.completed, o.total)
+	if passed > 0 {
+		status += fmt.Sprintf(" %s%d passed%s", green, passed, reset)
+	}
+	if o.failed > 0 {
+		status += fmt.Sprintf(" %s%d failed%s", red, o.failed, reset)
+	}
+	if len(o.running) > 0 {
+		status += fmt.Sprintf("  %s%s%s", dim, o.running[0], reset)
+		if len(o.running) > 1 {
+			status += fmt.Sprintf(" %s+%d more%s", dim, len(o.running)-1, reset)
+		}
+	}
+
+	if o.isTTY {
+		fmt.Printf("\r%s%s", clearLine, status)
+	} else if o.completed > 0 && o.completed == o.total {
+		// Non-TTY: print final line only
+		fmt.Printf("%s\n", status)
+	}
+}
+
+// clearProgress clears the progress line before summary output.
+func (o *output) clearProgress() {
+	if o.isTTY {
+		fmt.Printf("\r%s", clearLine)
+	}
 }
 
 // PrintSummary prints the sorted summary table, writes failure logs, and shows the final count.
@@ -92,7 +134,7 @@ func PrintSummary(task string, results []Result, verbose bool) {
 	}
 
 	// Summary table
-	fmt.Printf("%s%s%s\n\n", dim, separator, reset)
+	fmt.Printf("\n%s%s%s\n\n", dim, separator, reset)
 
 	for _, r := range sorted {
 		icon := green + "✓" + reset
