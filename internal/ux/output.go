@@ -9,16 +9,28 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 )
 
-const (
-	reset = "\033[0m"
-	bold  = "\033[1m"
-	dim   = "\033[2m"
-	red   = "\033[31m"
-	green = "\033[32m"
-	cyan  = "\033[36m"
+var (
+	styleHeader  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("36"))
+	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	styleSuccess = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	styleFail    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleBold    = lipgloss.NewStyle().Bold(true)
+	styleLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("86")) // Cyan-ish
+
+	iconSuccess = styleSuccess.Render("✓")
+	iconFail    = styleFail.Render("✗")
+	iconRunning = styleDim.Render("●")
+
+	styleBox = lipgloss.NewStyle().
+			PaddingLeft(2).
+			PaddingRight(2).
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(lipgloss.Color("240"))
 )
 
 const separator = "────────────────────────────────────────────────"
@@ -35,6 +47,7 @@ type output struct {
 	failed    int
 	running   []string
 	isTTY     bool
+	progress  progress.Model
 }
 
 func newOutput(task string, count int, parallel bool) *output {
@@ -42,14 +55,24 @@ func newOutput(task string, count int, parallel bool) *output {
 	if parallel {
 		mode = "parallel"
 	}
-	fmt.Printf("\n%s%sux %s%s  %s(%d packages, %s)%s\n",
-		bold, cyan, task, reset, dim, count, mode, reset)
+
+	header := styleHeader.Render("ux " + task)
+	info := styleDim.Render(fmt.Sprintf("(%d packages, %s)", count, mode))
+	fmt.Printf("\n%s  %s\n", header, info)
+
+	// Create a progress bar with a nice gradient
+	pg := progress.New(
+		progress.WithDefaultGradient(),
+		progress.WithoutPercentage(),
+		progress.WithWidth(40),
+	)
 
 	return &output{
 		task:     task,
 		total:    count,
 		parallel: parallel,
 		isTTY:    term.IsTerminal(int(os.Stdout.Fd())),
+		progress: pg,
 	}
 }
 
@@ -81,27 +104,56 @@ func (o *output) markCompleted(r Result) {
 
 // updateProgress writes a single-line progress indicator. Must be called with mu held.
 func (o *output) updateProgress() {
+	if !o.isTTY {
+		if o.completed > 0 && o.completed == o.total {
+			passed := o.completed - o.failed
+			status := fmt.Sprintf("  [%d/%d]", o.completed, o.total)
+			if passed > 0 {
+				status += " " + styleSuccess.Render(fmt.Sprintf("%d passed", passed))
+			}
+			if o.failed > 0 {
+				status += " " + styleFail.Render(fmt.Sprintf("%d failed", o.failed))
+			}
+			fmt.Printf("%s\n", status)
+		}
+		return
+	}
+
+	// Update bar width based on terminal width
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err == nil {
+		// Set bar to roughly 1/4 of terminal width, min 20, max 60
+		barWidth := width / 4
+		if barWidth < 20 {
+			barWidth = 20
+		}
+		if barWidth > 60 {
+			barWidth = 60
+		}
+		o.progress.Width = barWidth
+	}
+
+	ratio := float64(o.completed) / float64(o.total)
+	bar := o.progress.ViewAs(ratio)
+
 	passed := o.completed - o.failed
-	status := fmt.Sprintf("  [%d/%d]", o.completed, o.total)
+	status := fmt.Sprintf("  %s %d/%d", bar, o.completed, o.total)
+
 	if passed > 0 {
-		status += fmt.Sprintf(" %s%d passed%s", green, passed, reset)
+		status += " " + styleSuccess.Render(fmt.Sprintf("%d", passed))
 	}
 	if o.failed > 0 {
-		status += fmt.Sprintf(" %s%d failed%s", red, o.failed, reset)
+		status += " " + styleFail.Render(fmt.Sprintf("%d", o.failed))
 	}
+
 	if len(o.running) > 0 {
-		status += fmt.Sprintf("  %s%s%s", dim, o.running[0], reset)
+		status += "  " + styleDim.Render(o.running[0])
 		if len(o.running) > 1 {
-			status += fmt.Sprintf(" %s+%d more%s", dim, len(o.running)-1, reset)
+			status += styleDim.Render(fmt.Sprintf(" +%d more", len(o.running)-1))
 		}
 	}
 
-	if o.isTTY {
-		fmt.Printf("\r%s%s", clearLine, status)
-	} else if o.completed > 0 && o.completed == o.total {
-		// Non-TTY: print final line only
-		fmt.Printf("%s\n", status)
-	}
+	fmt.Printf("\r%s%s", clearLine, status)
 }
 
 // clearProgress clears the progress line before summary output.
@@ -133,25 +185,30 @@ func PrintSummary(task string, results []Result, verbose bool) {
 		}
 	}
 
-	// Summary table
-	fmt.Printf("\n%s%s%s\n\n", dim, separator, reset)
+	fmt.Printf("\n  %s\n\n", styleBold.Render("Results"))
 
+	var rows []string
 	for _, r := range sorted {
-		icon := green + "✓" + reset
+		icon := iconSuccess
 		if !r.Success {
-			icon = red + "✗" + reset
+			icon = iconFail
 		}
-		fmt.Printf("  %s  %-40s %s%s%s\n", icon, r.Package.Label, dim, fmtDuration(r.Duration), reset)
+		label := styleLabel.Render(fmt.Sprintf("%-40s", r.Package.Label))
+		dur := styleDim.Render(fmtDuration(r.Duration))
+		rows = append(rows, fmt.Sprintf("  %s  %s %s", icon, label, dur))
 	}
+
+	fmt.Println(styleBox.Render(strings.Join(rows, "\n")))
 
 	// Write log files and show details for failures
 	if len(failures) > 0 {
 		fmt.Println()
 		for _, r := range failures {
 			logFile := writeFailureLog(task, r)
-			fmt.Printf("  %s%sFAIL%s %s\n", bold, red, reset, r.Package.Label)
+			failHeader := styleFail.Bold(true).Render("FAIL")
+			fmt.Printf("  %s %s\n", failHeader, r.Package.Label)
 			if r.FailedStep != "" {
-				fmt.Printf("    %s→ %s%s\n", dim, r.FailedStep, reset)
+				fmt.Printf("    %s\n", styleDim.Render("→ "+r.FailedStep))
 			}
 			if verbose && r.Output != "" {
 				fmt.Println()
@@ -161,18 +218,21 @@ func PrintSummary(task string, results []Result, verbose bool) {
 				}
 				fmt.Println()
 			}
-			fmt.Printf("    %slog: %s%s\n", dim, logFile, reset)
+			fmt.Printf("    %s\n", styleDim.Render("log: "+logFile))
 		}
 	}
 
 	// Final count
-	fmt.Printf("\n%s%s%s\n", dim, separator, reset)
+	finalStatus := ""
 	if failed > 0 {
-		fmt.Printf("%s: %s%d passed%s, %s%d failed%s\n\n",
-			task, green, passed, reset, red, failed, reset)
+		finalStatus = fmt.Sprintf("%s  %s  %s",
+			styleBold.Render(task+":"),
+			styleSuccess.Render(fmt.Sprintf("%d passed", passed)),
+			styleFail.Render(fmt.Sprintf("%d failed", failed)))
 	} else {
-		fmt.Printf("%s: %s%d passed%s\n\n", task, green, passed, reset)
+		finalStatus = fmt.Sprintf("%s  %s", styleBold.Render(task+":"), styleSuccess.Render(fmt.Sprintf("%d passed", passed)))
 	}
+	fmt.Printf("\n  %s\n\n", finalStatus)
 }
 
 // writeFailureLog writes the full output of a failed task to /tmp/ux/<task>/<label>.log.
@@ -206,13 +266,15 @@ func writeFailureLog(task string, r Result) string {
 
 // PrintPackageList prints discovered packages (for `ux list`).
 func PrintPackageList(packages []Package) {
-	fmt.Printf("\n%s%sWorkspace packages%s\n\n", bold, cyan, reset)
+	fmt.Printf("\n%s\n\n", styleHeader.Render("Workspace packages"))
 	for _, pkg := range packages {
 		typeStr := ""
 		if pkg.Type != "" {
-			typeStr = " " + pkg.Type
+			typeStr = " " + styleHeader.Foreground(lipgloss.Color("36")).Render(pkg.Type)
 		}
-		fmt.Printf("  %-40s %s(%s)%s%s%s\n", pkg.Label, dim, pkg.Name, reset, cyan, typeStr+reset)
+		label := pkg.Label
+		name := styleDim.Render("(" + pkg.Name + ")")
+		fmt.Printf("  %-40s %s%s\n", label, name, typeStr)
 
 		// Sort task names for stable output
 		var taskNames []string
@@ -225,12 +287,13 @@ func PrintPackageList(packages []Package) {
 			cmds := pkg.Tasks[task]
 			source := ""
 			if s, ok := pkg.TaskSources[task]; ok && s == "default" {
-				source = dim + " (default)" + reset
+				source = styleDim.Render(" (default)")
 			}
+			taskName := styleSuccess.Render(fmt.Sprintf("%-12s", task))
 			if len(cmds) == 1 {
-				fmt.Printf("    %s%-12s%s %s%s\n", green, task, reset, cmds[0], source)
+				fmt.Printf("    %s %s%s\n", taskName, cmds[0], source)
 			} else {
-				fmt.Printf("    %s%-12s%s [%d steps]%s\n", green, task, reset, len(cmds), source)
+				fmt.Printf("    %s [%d steps]%s\n", taskName, len(cmds), source)
 			}
 		}
 	}

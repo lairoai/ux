@@ -7,11 +7,6 @@ members = [
 lint = { parallel = true }
 test = { parallel = true }
 build = { parallel = true }
-typecheck = { parallel = true }
-
-[defaults.python.tasks]
-lint = ["uv run ty check", "uv run ruff check --fix", "uv run ruff format"]
-test = "uv run pytest"
 
 [defaults.go.tasks]
 lint = "golangci-lint run ./..."

@@ -31,7 +31,7 @@ type migratedPackage struct {
 // It detects package types from marker files, groups common scripts into
 // [defaults.<type>.tasks], and emits minimal per-package configs.
 func RunMigrate(dir string) error {
-	fmt.Printf("\n%s%sux migrate%s\n\n", bold, cyan, reset)
+	fmt.Printf("\n%s\n\n", styleHeader.Render("ux migrate"))
 
 	// 1. Read root package.json
 	rootPkg, err := readPackageJSON(filepath.Join(dir, "package.json"))
@@ -96,9 +96,9 @@ func RunMigrate(dir string) error {
 	if written, err := writeFileIfNew(rootPath, rootToml); err != nil {
 		return err
 	} else if written {
-		fmt.Printf("  %s✓%s  ux.toml\n", green, reset)
+		fmt.Printf("  %s  ux.toml\n", iconSuccess)
 	} else {
-		fmt.Printf("  %s~%s  ux.toml %s(already exists, skipped)%s\n", dim, reset, dim, reset)
+		fmt.Printf("  %s  ux.toml %s\n", styleDim.Render("~"), styleDim.Render("(already exists, skipped)"))
 	}
 
 	// 9. Generate per-package ux.toml (minimal: type + overrides only)
@@ -111,16 +111,16 @@ func RunMigrate(dir string) error {
 		if written, err := writeFileIfNew(pkgPath, pkgToml); err != nil {
 			return err
 		} else if written {
-			fmt.Printf("  %s✓%s  %s/ux.toml\n", green, reset, filepath.ToSlash(rel))
+			fmt.Printf("  %s  %s/ux.toml\n", iconSuccess, filepath.ToSlash(rel))
 			migrated++
 		} else {
-			fmt.Printf("  %s~%s  %s/ux.toml %s(already exists, skipped)%s\n",
-				dim, reset, filepath.ToSlash(rel), dim, reset)
+			fmt.Printf("  %s  %s/ux.toml %s\n",
+				styleDim.Render("~"), filepath.ToSlash(rel), styleDim.Render("(already exists, skipped)"))
 		}
 	}
 
-	fmt.Printf("\n%sMigrated %d packages.%s\n", bold, migrated, reset)
-	fmt.Printf("%sYou can now run: ux list%s\n\n", dim, reset)
+	fmt.Printf("\n%s\n", styleBold.Render(fmt.Sprintf("Migrated %d packages.", migrated)))
+	fmt.Printf("%s\n\n", styleDim.Render("You can now run: ux list"))
 	return nil
 }
 
