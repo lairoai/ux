@@ -373,6 +373,21 @@ func ResolveFilter(root, cwd, raw string) (string, error) {
 	}
 }
 
+// FilterByLabels filters packages matching any of the given //label or //label/... patterns.
+func FilterByLabels(packages []Package, filters []string) []Package {
+	seen := make(map[string]bool)
+	var result []Package
+	for _, filter := range filters {
+		for _, pkg := range FilterByLabel(packages, filter) {
+			if !seen[pkg.Label] {
+				seen[pkg.Label] = true
+				result = append(result, pkg)
+			}
+		}
+	}
+	return result
+}
+
 // FilterByLabel filters packages by a //label or //label/... pattern.
 // //... matches all packages.
 func FilterByLabel(packages []Package, filter string) []Package {

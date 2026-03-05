@@ -27,7 +27,8 @@ func main() {
 	}
 
 	// Parse arguments
-	var task, filter string
+	var task string
+	var filters []string
 	var affected, verbose bool
 
 	for _, arg := range args {
@@ -40,7 +41,7 @@ func main() {
 		case arg == "--verbose" || arg == "-v":
 			verbose = true
 		case task != "" && ux.IsFilterArg(arg):
-			filter = arg
+			filters = append(filters, arg)
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", arg)
 			os.Exit(1)
@@ -48,7 +49,7 @@ func main() {
 			if task == "" {
 				task = arg
 			} else if ux.IsFilterArg(arg) {
-				filter = arg
+				filters = append(filters, arg)
 			} else {
 				fmt.Fprintf(os.Stderr, "unexpected argument: %s\n", arg)
 				os.Exit(1)
@@ -82,17 +83,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Resolve relative filter to absolute //label
-	if filter != "" {
+	// Resolve relative filters to absolute //labels
+	if len(filters) > 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		filter, err = ux.ResolveFilter(root, cwd, filter)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+		for i, f := range filters {
+			resolved, err := ux.ResolveFilter(root, cwd, f)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			filters[i] = resolved
 		}
 	}
 
@@ -117,8 +121,8 @@ func main() {
 	}
 
 	// Apply filters
-	if filter != "" {
-		packages = ux.FilterByLabel(packages, filter)
+	if len(filters) > 0 {
+		packages = ux.FilterByLabels(packages, filters)
 	}
 	if affected {
 		packages, err = ux.FilterAffected(root, packages)
@@ -173,7 +177,7 @@ func printUsage() {
 	fmt.Print(`ux - simple monorepo task runner
 
 Usage:
-  ux <task> [target] [--affected] [-- extra args...]
+  ux <task> [targets...] [--affected] [-- extra args...]
 
 Targets:
   //label             Absolute from workspace root
@@ -189,6 +193,7 @@ Commands:
   ux <task> ...               Run task on all packages under cwd
   ux <task> //label           Run task on a specific package (absolute)
   ux <task> //dir/...         Run task on all packages under dir/
+  ux <task> //a //b           Run task on multiple targets
   ux <task> --affected        Run task only on packages changed vs origin/main
   ux <task> -v                Show failure output inline (verbose)
   ux <task> -- -n auto        Append flags to the underlying command
@@ -200,6 +205,7 @@ Examples:
   ux test                     Test everything (serial)
   ux test //services/api      Test one package
   ux lint //packages/...      Lint all packages under packages/
+  ux test . //services/api    Test multiple targets
   ux lint --affected          Lint only changed packages
   cd packages/api && ux test .   Test from inside a package
   ux test -- -n auto          Append pytest flags
