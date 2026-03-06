@@ -180,7 +180,8 @@ Targets:
   //dir/...           All packages under dir/
   .                   Package at current directory
   ...  ./...          All packages under current directory
-  foo/bar             Relative to current directory
+  foo                 Package relative to current directory
+  foo/bar             Nested package relative to current directory
 
 Commands:
   ux <task>                   Run task on all packages

@@ -311,7 +311,7 @@ func resolvePackage(root, dir string, defaults map[string]map[string][]string) (
 
 // IsFilterArg returns true if an argument looks like a package filter rather than
 // a task name or flag. Matches: //-prefixed, ".", "...", "./...", "./" prefixed,
-// or bare paths containing "/" that don't start with "-".
+// bare paths containing "/", or any bare name not starting with "-" (e.g. "cli").
 func IsFilterArg(arg string) bool {
 	if strings.HasPrefix(arg, "//") {
 		return true
@@ -322,10 +322,10 @@ func IsFilterArg(arg string) bool {
 	if strings.HasPrefix(arg, "./") {
 		return true
 	}
-	if strings.Contains(arg, "/") && !strings.HasPrefix(arg, "-") {
-		return true
+	if strings.HasPrefix(arg, "-") {
+		return false
 	}
-	return false
+	return true
 }
 
 // ResolveFilter converts a possibly-relative filter into a //-prefixed absolute filter.
