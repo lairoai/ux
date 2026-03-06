@@ -15,12 +15,13 @@ import (
 )
 
 var (
-	styleHeader  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("36"))
-	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-	styleSuccess = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	styleFail    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	styleBold    = lipgloss.NewStyle().Bold(true)
-	styleLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("86")) // Cyan-ish
+	styleHeader   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("36"))
+	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	styleSuccess  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	styleFail     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleBold     = lipgloss.NewStyle().Bold(true)
+	styleLabel    = lipgloss.NewStyle().Foreground(lipgloss.Color("86")) // Cyan-ish
+	styleWarning  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))  // Yellow
 
 	iconSuccess = styleSuccess.Render("✓")
 	iconFail    = styleFail.Render("✗")
@@ -32,6 +33,12 @@ var (
 			Border(lipgloss.NormalBorder(), false, false, false, true).
 			BorderForeground(lipgloss.Color("240"))
 )
+
+// Warnf writes a formatted warning message to stderr with a colorized "warning:" prefix.
+func Warnf(format string, args ...any) {
+	prefix := styleWarning.Render("warning:")
+	fmt.Fprintf(os.Stderr, "%s %s\n", prefix, fmt.Sprintf(format, args...))
+}
 
 const separator = "────────────────────────────────────────────────"
 

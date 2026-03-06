@@ -125,13 +125,34 @@ func main() {
 
 	// Apply filters
 	if len(filters) > 0 {
-		// Warn about any filter that matches nothing but has sub-packages
+		// Evaluate each filter once; warn about any that match nothing and
+		// track whether every filter came up empty.
+		var anyFilterMatchedNothing bool
+		seen := make(map[string]bool)
+		var filtered []ux.Package
 		for i, f := range filters {
-			if suggestion := ux.SuggestFilterExpansion(packages, f); suggestion != "" {
-				fmt.Fprintf(os.Stderr, "warning: filter %q matched no packages; did you mean %q?\n", originalFilters[i], suggestion)
+			matched := ux.FilterByLabel(packages, f)
+			if len(matched) == 0 {
+				anyFilterMatchedNothing = true
+				if suggestion := ux.SuggestFilterExpansion(packages, f); suggestion != "" {
+					ux.Warnf("filter %q matched no packages; did you mean %q?", originalFilters[i], suggestion)
+				} else {
+					ux.Warnf("filter %q matched no packages", originalFilters[i])
+				}
+			} else {
+				for _, pkg := range matched {
+					if !seen[pkg.Label] {
+						seen[pkg.Label] = true
+						filtered = append(filtered, pkg)
+					}
+				}
 			}
 		}
-		packages = ux.FilterByLabels(packages, filters)
+		packages = filtered
+		// If every filter matched nothing, the warnings above are sufficient — exit cleanly.
+		if anyFilterMatchedNothing && len(packages) == 0 {
+			os.Exit(0)
+		}
 	}
 	if affected {
 		packages, err = ux.FilterAffected(root, packages)
@@ -150,7 +171,7 @@ func main() {
 	}
 
 	if len(relevant) == 0 {
-		fmt.Printf("no packages define task %q\n", task)
+		ux.Warnf("no packages define task %q", task)
 		os.Exit(0)
 	}
 
