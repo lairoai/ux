@@ -8,6 +8,9 @@ import (
 	ux "github.com/lairoai/ux/internal/ux"
 )
 
+// version is set at build time via -ldflags "-X main.version=<ver>".
+var version = "dev"
+
 func main() {
 	args := os.Args[1:]
 
@@ -35,6 +38,9 @@ func main() {
 		switch {
 		case arg == "--help" || arg == "-h":
 			printUsage()
+			os.Exit(0)
+		case arg == "--version":
+			fmt.Printf("ux version %s\n", version)
 			os.Exit(0)
 		case arg == "--affected":
 			affected = true
@@ -229,6 +235,7 @@ Commands:
   ux <task> -- -n auto        Append flags to the underlying command
   ux list                     List all discovered packages and their tasks
   ux migrate                  Migrate from turborepo (reads package.json + turbo.json)
+  ux --version                Print the version and exit
 
 Examples:
   ux lint                     Lint everything (parallel)
