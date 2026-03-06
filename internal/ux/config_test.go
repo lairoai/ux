@@ -47,6 +47,61 @@ func TestIsFilterArg(t *testing.T) {
 	}
 }
 
+func TestSuggestFilterExpansion(t *testing.T) {
+	packages := []Package{
+		{Label: "//cli"},
+		{Label: "//packages/foo"},
+		{Label: "//packages/bar"},
+		{Label: "//services/api"},
+	}
+
+	tests := []struct {
+		name   string
+		filter string
+		want   string
+	}{
+		{
+			name:   "filter matches nothing but has sub-packages",
+			filter: "//packages",
+			want:   "//packages/...",
+		},
+		{
+			name:   "filter matches a package directly - no suggestion",
+			filter: "//cli",
+			want:   "",
+		},
+		{
+			name:   "wildcard filter - no suggestion",
+			filter: "//packages/...",
+			want:   "",
+		},
+		{
+			name:   "root wildcard - no suggestion",
+			filter: "//...",
+			want:   "",
+		},
+		{
+			name:   "filter matches nothing and has no sub-packages",
+			filter: "//missing",
+			want:   "",
+		},
+		{
+			name:   "filter matches nothing, no sub-packages for partial prefix",
+			filter: "//pack",
+			want:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SuggestFilterExpansion(packages, tt.filter)
+			if got != tt.want {
+				t.Errorf("SuggestFilterExpansion(%q) = %q, want %q", tt.filter, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveFilter(t *testing.T) {
 	tests := []struct {
 		name string
