@@ -84,12 +84,15 @@ func main() {
 	}
 
 	// Resolve relative filters to absolute //labels
+	var originalFilters []string
 	if len(filters) > 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+		originalFilters = make([]string, len(filters))
+		copy(originalFilters, filters)
 		for i, f := range filters {
 			resolved, err := ux.ResolveFilter(root, cwd, f)
 			if err != nil {
@@ -122,6 +125,12 @@ func main() {
 
 	// Apply filters
 	if len(filters) > 0 {
+		// Warn about any filter that matches nothing but has sub-packages
+		for i, f := range filters {
+			if suggestion := ux.SuggestFilterExpansion(packages, f); suggestion != "" {
+				fmt.Fprintf(os.Stderr, "warning: filter %q matched no packages; did you mean %q?\n", originalFilters[i], suggestion)
+			}
+		}
 		packages = ux.FilterByLabels(packages, filters)
 	}
 	if affected {

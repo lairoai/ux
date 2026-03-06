@@ -420,6 +420,28 @@ func FilterByLabel(packages []Package, filter string) []Package {
 	return result
 }
 
+// SuggestFilterExpansion returns a non-empty suggestion if the given resolved
+// filter (e.g. "//packages") matches no packages but sub-packages exist that
+// would be matched by the wildcard expansion (e.g. "//packages/...").
+// Returns "" if the filter already matches, is already a wildcard, or has no
+// sub-packages.
+func SuggestFilterExpansion(packages []Package, resolvedFilter string) string {
+	label := strings.TrimPrefix(resolvedFilter, "//")
+	// Wildcards never need expansion suggestions
+	if strings.HasSuffix(label, "/...") || label == "..." {
+		return ""
+	}
+	// If the filter already matches something, no suggestion needed
+	if len(FilterByLabel(packages, resolvedFilter)) > 0 {
+		return ""
+	}
+	// Check whether the wildcard expansion would match
+	if len(FilterByLabel(packages, resolvedFilter+"/...")) > 0 {
+		return resolvedFilter + "/..."
+	}
+	return ""
+}
+
 // FilterAffected keeps only packages that have changed files vs origin/main.
 func FilterAffected(root string, packages []Package) ([]Package, error) {
 	raw, err := gitDiffFiles(root)
