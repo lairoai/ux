@@ -4,13 +4,36 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release version tag (e.g. v0.1.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  resolve-tag:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve tag
+        id: resolve
+        run: |
+          RAW_TAG="${{ inputs.tag || github.ref_name }}"
+          if [[ ! "$RAW_TAG" =~ ^v ]]; then
+            RAW_TAG="v$RAW_TAG"
+          fi
+          echo "version=$RAW_TAG" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $RAW_TAG"
+
   release:
     name: Build and release
+    needs: resolve-tag
     runs-on: ubuntu-latest
 
     strategy:
@@ -46,10 +69,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
         run: |
           go build \
             -trimpath \
-            -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
+            -ldflags="-s -w -X main.version=${VERSION}" \
             -o ux-${{ matrix.suffix }}${{ matrix.ext }} \
             ./cmd/ux
 
@@ -61,7 +85,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: release
+    needs: [resolve-tag, release]
     runs-on: ubuntu-latest
 
     steps:
@@ -71,8 +95,15 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum ux-* > checksums.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve-tag.outputs.version }}
           files: dist/*
           generate_release_notes: true
+

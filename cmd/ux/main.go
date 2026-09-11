@@ -3,13 +3,30 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	ux "github.com/lairoai/ux/internal/ux"
 )
 
-// version is set at build time via -ldflags "-X main.version=<ver>".
+// version is set at build time via -ldflags "-X main.version=<ver>",
+// or discovered at runtime from Go module build info when installed via `go install`.
 var version = "dev"
+
+func getVersion() string {
+	if version != "" && version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			return bi.Main.Version
+		}
+	}
+	if version != "" {
+		return version
+	}
+	return "dev"
+}
 
 func main() {
 	args := os.Args[1:]
@@ -40,7 +57,7 @@ func main() {
 			printUsage()
 			os.Exit(0)
 		case arg == "--version":
-			fmt.Printf("ux version %s\n", version)
+			fmt.Printf("ux version %s\n", getVersion())
 			os.Exit(0)
 		case arg == "--affected":
 			affected = true

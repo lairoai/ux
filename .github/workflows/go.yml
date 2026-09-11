@@ -26,3 +26,7 @@ jobs:
 
     - name: Test
       run: go test -v ./...
+
+    - name: Verify build with version ldflags
+      run: go build -v -ldflags="-s -w -X main.version=test-version" ./cmd/ux
+
