@@ -33,10 +33,9 @@ Pre-compiled standalone binaries for Linux, macOS, and Windows are available on 
 # Build from source
 make build
 
-# Install to $GOBIN (or /usr/local/bin via PREFIX)
+# Install to $GOBIN (defaults to $HOME/go/bin)
 make install
 ```
-
 
 ## Quick start
 
@@ -281,13 +280,15 @@ Tagged releases trigger automated GitHub Actions builds to:
 3. Publish a GitHub Release containing all binaries and checksums.
 4. Index the release tag on the public Go module proxy (`proxy.golang.org`) for pinning via `go install`.
 
-To publish a new release:
-- **Via GitHub Actions**: Trigger the `Release` workflow manually (`workflow_dispatch`) with the target tag (e.g. `v0.1.0`).
-- **Via Git**: Push a version tag directly:
-  ```sh
-  git tag -a v0.1.0 -m "Release v0.1.0"
-  git push origin v0.1.0
-  ```
+To publish a new release, push a version tag:
+
+```sh
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+The tag is the single trigger for a release, so the published binaries and the
+source the Go module proxy serves always come from the same commit.
 
 ## Project layout
 

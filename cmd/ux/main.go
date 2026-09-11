@@ -13,19 +13,24 @@ import (
 // or discovered at runtime from Go module build info when installed via `go install`.
 var version = "dev"
 
-func getVersion() string {
-	if version != "" && version != "dev" {
-		return version
+// resolveVersion picks the most specific version available: an explicit
+// ldflags value wins, then the module version recorded by `go install`.
+func resolveVersion(ldflagsVersion, moduleVersion string) string {
+	if ldflagsVersion != "" && ldflagsVersion != "dev" {
+		return ldflagsVersion
 	}
-	if bi, ok := debug.ReadBuildInfo(); ok {
-		if bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-			return bi.Main.Version
-		}
-	}
-	if version != "" {
-		return version
+	if moduleVersion != "" && moduleVersion != "(devel)" {
+		return moduleVersion
 	}
 	return "dev"
+}
+
+func getVersion() string {
+	var moduleVersion string
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		moduleVersion = bi.Main.Version
+	}
+	return resolveVersion(version, moduleVersion)
 }
 
 func main() {

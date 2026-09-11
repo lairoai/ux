@@ -4,36 +4,13 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release version tag (e.g. v0.1.0)'
-        required: true
-        type: string
 
 permissions:
   contents: write
 
 jobs:
-  resolve-tag:
-    name: Resolve release version
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.resolve.outputs.version }}
-    steps:
-      - name: Resolve tag
-        id: resolve
-        run: |
-          RAW_TAG="${{ inputs.tag || github.ref_name }}"
-          if [[ ! "$RAW_TAG" =~ ^v ]]; then
-            RAW_TAG="v$RAW_TAG"
-          fi
-          echo "version=$RAW_TAG" >> "$GITHUB_OUTPUT"
-          echo "Releasing version: $RAW_TAG"
-
   release:
     name: Build and release
-    needs: resolve-tag
     runs-on: ubuntu-latest
 
     strategy:
@@ -69,7 +46,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-          VERSION: ${{ needs.resolve-tag.outputs.version }}
+          VERSION: ${{ github.ref_name }}
         run: |
           go build \
             -trimpath \
@@ -85,7 +62,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [resolve-tag, release]
+    needs: release
     runs-on: ubuntu-latest
 
     steps:
@@ -103,7 +80,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.resolve-tag.outputs.version }}
           files: dist/*
           generate_release_notes: true
-
