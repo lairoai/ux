@@ -46,10 +46,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          VERSION: ${{ github.ref_name }}
         run: |
           go build \
             -trimpath \
-            -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
+            -ldflags="-s -w -X main.version=${VERSION}" \
             -o ux-${{ matrix.suffix }}${{ matrix.ext }} \
             ./cmd/ux
 
@@ -70,6 +71,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum ux-* > checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

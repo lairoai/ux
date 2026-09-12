@@ -4,17 +4,37 @@ A simple monorepo task runner for Go, Python, and Rust projects. Replaces turbor
 
 ## Install
 
-Requires Go 1.24+.
+Requires Go 1.24+ (if building from source or using `go install`).
+
+### Via `go install` (Go module proxy)
+
+Install the latest release:
+
+```sh
+go install github.com/lairoai/ux/cmd/ux@latest
+```
+
+Or pin to a specific tagged release version:
+
+```sh
+go install github.com/lairoai/ux/cmd/ux@v0.1.0
+```
+
+> [!NOTE]
+> Installing via `go install` resolves through the public Go module proxy (`proxy.golang.org`), making it suitable for sandboxed environments (such as Claude Code on the web) where external GitHub traffic may be restricted.
+
+### Pre-built Binaries
+
+Pre-compiled standalone binaries for Linux, macOS, and Windows are available on the [GitHub Releases](https://github.com/lairoai/ux/releases) page along with SHA256 checksums (`checksums.txt`).
+
+### Build from source
 
 ```sh
 # Build from source
 make build
 
-# Install to /usr/local/bin (or set PREFIX)
+# Install to $GOBIN (defaults to $HOME/go/bin)
 make install
-
-# Or install directly with go
-go install github.com/lairoai/ux/cmd/ux@latest
 ```
 
 ## Quick start
@@ -249,6 +269,55 @@ This reads your `package.json` (workspaces) and `turbo.json` (task definitions),
 The migration detects which tasks should be serial (from `--concurrency=1` in turbo scripts), finds common scripts across packages of the same type to create `[defaults.<type>.tasks]`, and emits minimal per-package configs with only the differences.
 
 Existing `ux.toml` files are never overwritten. Run `ux list` after migration to verify.
+
+## Releases and Versioning
+
+`ux` follows Semantic Versioning (`vMAJOR.MINOR.PATCH`).
+
+`ux --version` reports the release version plus the commit and date it was built
+from, so a version in a bug report identifies exact source:
+
+```
+ux version v0.1.0 (e4478f4, 2026-09-11)
+```
+
+The commit, date and a `dirty` marker for uncommitted changes come from the VCS
+metadata Go stamps into the binary at build time; no extra build flags are
+needed. Binaries installed with `go install` are built by the module proxy from
+a source archive rather than a checkout, so they carry no VCS metadata and print
+the version alone.
+
+Tagged releases trigger automated GitHub Actions builds to:
+1. Build cross-platform binaries for Linux (amd64, arm64), macOS (amd64, arm64), and Windows (amd64).
+2. Generate SHA256 checksums (`checksums.txt`).
+3. Publish a GitHub Release containing all binaries and checksums.
+4. Index the release tag on the public Go module proxy (`proxy.golang.org`) for pinning via `go install`.
+
+To publish a new release, push a version tag:
+
+```sh
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+The tag is the single trigger for a release, so the published binaries and the
+source the Go module proxy serves always come from the same commit.
+
+### Verifying a release
+
+This repository publishes [immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
+Once a release is published its tag is locked to a commit and its binaries
+cannot be modified or deleted, and GitHub signs a Sigstore attestation covering
+each asset. To verify a downloaded binary came from this repository's release
+build:
+
+```sh
+gh attestation verify ux-darwin-arm64 --repo lairoai/ux
+```
+
+Installs through `go install` are covered separately by the Go checksum
+database (`sum.golang.org`), which records the hash of each published version
+and fails the build if a tag is ever repointed.
 
 ## Project layout
 
