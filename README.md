@@ -308,12 +308,22 @@ source the Go module proxy serves always come from the same commit.
 This repository publishes [immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
 Once a release is published its tag is locked to a commit and its binaries
 cannot be modified or deleted, and GitHub signs a Sigstore attestation covering
-each asset. To verify a downloaded binary came from this repository's release
-build:
+each asset. To verify a release and list the digests it attests to:
 
 ```sh
-gh attestation verify ux-darwin-arm64 --repo lairoai/ux
+gh release verify v0.1.0 --repo lairoai/ux
 ```
+
+To verify that a binary you downloaded is that release's asset:
+
+```sh
+gh release verify-asset v0.1.0 ux-darwin-arm64 --repo lairoai/ux
+```
+
+Use these rather than `gh attestation verify`, which defaults to the SLSA
+provenance predicate and validates the signer against this repository. Release
+attestations use the `https://in-toto.io/attestation/release/v0.2` predicate and
+are signed by GitHub, so that command reports no attestations found.
 
 Installs through `go install` are covered separately by the Go checksum
 database (`sum.golang.org`), which records the hash of each published version
