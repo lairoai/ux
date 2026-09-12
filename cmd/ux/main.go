@@ -25,12 +25,62 @@ func resolveVersion(ldflagsVersion, moduleVersion string) string {
 	return "dev"
 }
 
+// provenance is the VCS metadata Go stamps into a binary built from a git
+// checkout. Binaries the module proxy serves to `go install` carry none of it,
+// so every field is optional.
+type provenance struct {
+	revision string
+	date     string
+	modified bool
+}
+
+// readProvenance extracts VCS provenance from build settings, shortening the
+// revision to the seven characters humans actually quote in bug reports.
+func readProvenance(settings []debug.BuildSetting) provenance {
+	var p provenance
+	for _, s := range settings {
+		switch s.Key {
+		case "vcs.revision":
+			p.revision = s.Value
+			if len(p.revision) > 7 {
+				p.revision = p.revision[:7]
+			}
+		case "vcs.time":
+			p.date, _, _ = strings.Cut(s.Value, "T")
+		case "vcs.modified":
+			p.modified = s.Value == "true"
+		}
+	}
+	return p
+}
+
+// formatVersion renders the version line, appending provenance when the binary
+// carries it: "v0.1.0 (e4478f4, 2026-09-11)".
+func formatVersion(version string, p provenance) string {
+	var details []string
+	if p.revision != "" {
+		details = append(details, p.revision)
+	}
+	if p.date != "" {
+		details = append(details, p.date)
+	}
+	if p.modified {
+		details = append(details, "dirty")
+	}
+	if len(details) == 0 {
+		return version
+	}
+	return fmt.Sprintf("%s (%s)", version, strings.Join(details, ", "))
+}
+
 func getVersion() string {
 	var moduleVersion string
+	var p provenance
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		moduleVersion = bi.Main.Version
+		p = readProvenance(bi.Settings)
 	}
-	return resolveVersion(version, moduleVersion)
+	return formatVersion(resolveVersion(version, moduleVersion), p)
 }
 
 func main() {

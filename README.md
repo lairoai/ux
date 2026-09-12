@@ -274,6 +274,19 @@ Existing `ux.toml` files are never overwritten. Run `ux list` after migration to
 
 `ux` follows Semantic Versioning (`vMAJOR.MINOR.PATCH`).
 
+`ux --version` reports the release version plus the commit and date it was built
+from, so a version in a bug report identifies exact source:
+
+```
+ux version v0.1.0 (e4478f4, 2026-09-11)
+```
+
+The commit, date and a `dirty` marker for uncommitted changes come from the VCS
+metadata Go stamps into the binary at build time; no extra build flags are
+needed. Binaries installed with `go install` are built by the module proxy from
+a source archive rather than a checkout, so they carry no VCS metadata and print
+the version alone.
+
 Tagged releases trigger automated GitHub Actions builds to:
 1. Build cross-platform binaries for Linux (amd64, arm64), macOS (amd64, arm64), and Windows (amd64).
 2. Generate SHA256 checksums (`checksums.txt`).
@@ -289,6 +302,22 @@ git push origin v0.1.0
 
 The tag is the single trigger for a release, so the published binaries and the
 source the Go module proxy serves always come from the same commit.
+
+### Verifying a release
+
+This repository publishes [immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
+Once a release is published its tag is locked to a commit and its binaries
+cannot be modified or deleted, and GitHub signs a Sigstore attestation covering
+each asset. To verify a downloaded binary came from this repository's release
+build:
+
+```sh
+gh attestation verify ux-darwin-arm64 --repo lairoai/ux
+```
+
+Installs through `go install` are covered separately by the Go checksum
+database (`sum.golang.org`), which records the hash of each published version
+and fails the build if a tag is ever repointed.
 
 ## Project layout
 
